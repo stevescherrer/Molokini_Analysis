@@ -1,0 +1,449 @@
+---
+title: "Molokini Analysis"
+output: html_notebook
+---
+
+# Written by Steve Scherrer - July/August 2021
+
+## Background
+This notebook documents preliminary analysis of tracking data for fish tagged in Molokini Crater between 2020-05-16 and 2021-05-24. 
+
+The purpose of this study is to understand how human impacts affect the fish of Molokini Crater
+
+We are particularly interested in answering the following hypotheses:
+1. Is the presence of fish affected by vessel presence
+
+2. Does the proportion of time fish are present within the crater negatively correlated with vessel presence?
+
+Proposed Approach:
+1. Begin by calculating the number of each species tagged and basic summary statistics
+2. Calculate Metrics
+  - Receiver Use
+  - Pianka's Niche Overlap
+  - residency
+3. Make the following plots
+  - Map - Receiver locations
+  - Map - Average receiver use by Species
+  - Scatterplot - day night plots
+  - Bar Plot - The number of detections per day (individual)
+  - Bar Plot - The number of individuals detected (species)
+  - Line Chart - The proportion of individuals detected n days after tagging (30 day moving average by species)
+  - Bar Plot - Daily vessel traffic
+  - Scatter Plot - vessel traffic vs. proportion of fish detected in crater daily (scatterplot by species)
+4. Perform the following statistical Tests
+  - Compare Residency Rates by Species
+  - Compare residency by species, size, and time at liberty
+  - Create a GLM comparing # of individuals in crater regressed against boat traffic and species using AR(1) term on dependent variable on some time scale (daily? 6 hours? depends on resolution of vessel data)
+
+# Workspace Setup
+## Establish Directory Heirarchy
+```{r}
+project_directory = '/Users/stephenscherrer/Documents/Programming/Projects/Molokini'
+scripts_directory = file.path(project_directory, 'Analysis Scripts')
+data_directory = file.path(project_directory, 'Data')
+results_directory = file.path(project_directory, 'Results')
+figure_directory = file.path(results_directory, 'Figures')
+
+```
+
+## Source package dependencies and utility functions from 'Utility Functions.R' file
+```{r}
+source(file.path(scripts_directory, 'Utility Functions.R'))
+```
+
+## Load Data
+- load various datafiles 
+```{r}
+## Files from VUE 
+molo_df = load_vemco_data(file.path(data_directory, 'VUE_Export.csv'))
+false_detections_df = load_fdf_report(file.path(data_directory, 'FDA.csv'))
+
+## Vessel Traffic data
+vessel_df = 
+
+## Metadata Files
+tagging_df = load_tagging_data(file.path(data_directory, ))
+## temp 
+tagging_df = data.frame(tag_id = detections_per_tag_per_receiver$tag_id, species = sample(c('a', 'b', 'c'), size = nrow(detections_per_tag_per_receiver), replace = T))
+
+receiver_df = load_receiver_data(file.path(data_directory, ))
+```
+
+## Clean Data
+- Associate detections with time of day (day, night, dawn, dusk)
+- Remove detections from tags not associated with this study
+- Remove false detections
+```{r}
+## Associate detections with time of day
+molo_df = get_time_of_day(molo_df)
+
+## Remove irrelevant tags
+# molo_df = molo_df[molo_df$full_tag_id %in% tagging_df$vem_tag_id, ]
+
+## Filter false detections
+molo_df = filter_false_detections(molo_df)
+```
+
+# Exploratory Data Analysis
+## Count of individuals tagged by species
+```{r}
+tags_by_species = aggregate(tag_id ~ species, data = tagging_df, FUN = uniqueN)
+  colnames(tags_by_species) = c('species', 'n_tagged')
+print(tags_by_species)
+```
+
+## Summary Statistics
+```{r}
+# Time at liberty
+time_at_liberty = calculate_time_at_liberty(molo_df)
+
+# Days Detected
+days_detected = calculate_days_detected(molo_df)
+
+# % of days detected
+detection_stats = merge(x = days_detected, y = time_at_liberty[ ,c('tag_id', 'days_at_liberty')], on.x = 'tag_id', on.y = 'tag_id')
+detection_stats$percent_days_detected = round(detection_stats$unique_days / detection_stats$days_at_liberty, 4) * 100
+
+# Merge with tagging data to get fish info
+detection_stats = merge(x = tagging_df[ ,c('tagging_datetime', 'species', 'tag_id', 'fork_length_cm', )], y = detection_stats, on.x = 'tag_id', on.y = 'tag_id')
+detection_stats = detection_stats[ ,order(detection_stats$species, detection_stats$tagging_datetime, detection_stats$tag_id)]
+print(detection_stats)
+```
+
+# Metric Calculations
+## index of receiver use
+```{r}
+## sum all spp, sum all individuals (detections of tag at given reciever / all detections of tag)
+
+## Calculate unique detections per tag per receiver station
+detections_per_tag_per_receiver = aggregate(datetime~tag_id+receiver, data = molo_df, FUN = uniqueN) # aggregate(datetime~tag_id+receiver+species, data = molo_df, FUN = uniqueN)
+colnames(detections_per_tag_per_receiver) = c('tag_id', 'receiver', 'detections') # colnames(detections_per_tag_per_receiver) = c('tag_id', 'receiver', 'species', 'detections')
+
+## Calculate receiver use metric for each fish and receiver pair
+detections_per_tag_per_receiver$receiver_use = 0
+for (species in detections_per_tag_per_receiver$species){
+  for (i in 1:nrow(detections_per_tag_per_receiver)){
+    detections_per_tag_per_receiver$receiver_use[i] = detections_per_tag_per_receiver$detections[i] / sum(detections_per_tag_per_receiver$detections[detections_per_tag_per_receiver$tag_id == detections_per_tag_per_receiver$tag_id[i]])
+  }
+}
+
+## Calculate average receiver use metric for each tag - Omit stations with no use as this would bias metric
+indvidual_receiver_use = aggregate(receiver_use~tag_id+species, data = detections_per_tag_per_receiver[detections_per_tag_per_receiver$receiver_use > 0, ], FUN = mean)
+
+## Add this information to detection_stats
+detection_stats = merge(detection_stats, indvidual_receiver_use, on = 'tag_id')
+
+## Calculate receiver use metric by species
+species_receiver_use = aggregate(index_of_receiver_use~species, data = indvidual_receiver_use, FUN = mean)
+colnames(species_receiver_use) = c('species', 'receiver_use')
+
+print(species_receiver_use)
+``` 
+## Calculate Pianka's Niche Overlap Index - Pianka (1973) The Structure of Lizard Communities
+ 0 = no overlap, 1 = perfect overlap
+```{r}
+## Get species associated with each tag in detections_per_tag_per_receiver
+detections_per_tag_per_receiver = merge(x = detections_per_tag_per_receiver, y = tagging_df[ ,c('tag_id', 'species')], on = 'tag_id')
+
+## Aggregate data averaged by species
+receiver_use_aggregated_by_species = aggregate(index_of_receiver_use ~ species + receiver , data = detections_per_tag_per_receiver, FUN = mean)
+  colnames(receiver_use_aggregated_by_species) = c('species', 'receiver', 'avg_use_index')
+  
+## Reshape from Long to Wide format
+receiver_use_aggregated_by_species_wide = dcast(receiver_use_aggregated_by_species, species ~ receiver)
+
+## Get all species combinations 
+species_combos = data.frame('species_1' = 'a', 'species_2' = 'a')
+for (i in 1:nrow(receiver_use_aggregated_by_species_wide)){
+    if(i != nrow(receiver_use_aggregated_by_species_wide)){
+    for (j in (i+1):nrow(receiver_use_aggregated_by_species_wide)){
+      species_combos = rbind(species_combos, data.frame('species_1' = receiver_use_aggregated_by_species_wide$species[i], 'species_2' = receiver_use_aggregated_by_species_wide$species[j]))
+      print(j)
+    }
+  }
+}
+
+## Calculate Pianka's index for all pairs
+species_combos$pianka_index = 0
+for(i in 1:nrow(species_combos)){
+  species_combos$pianka_index[i] = sum(receiver_use_aggregated_by_species_wide[receiver_use_aggregated_by_species_wide$species == species_combos$species_1[i], -1] * 
+     receiver_use_aggregated_by_species_wide[receiver_use_aggregated_by_species_wide$species == species_combos$species_2[i], -1]) /
+    (sqrt(sum(receiver_use_aggregated_by_species_wide[receiver_use_aggregated_by_species_wide$species == species_combos$species_1[i], -1] ^ 2) * 
+    sum(receiver_use_aggregated_by_species_wide[receiver_use_aggregated_by_species_wide$species == species_combos$species_2[i], -1] ^ 2)))
+}
+
+print(species_combos)
+```
+
+## Plots
+Study Area
+```{r}
+## Plot study area and receivers
+library(ggmap)
+
+molo_basemap = get_map(location = c(lon = -156.496331, lat = 20.633007), zoom = 16, maptype = 'satellite')
+receiver_map = ggmap(molo_basemap) + geom_point(data = molo_df[molo_df$receiver != 'Tagging Location', ], mapping = aes(x = lon, y = lat), col = 'red') + labs(x = '°Longitude', y = '°Latitude') + ggsave(filename = 'Receiver Locations Google Map.pdf', path = figure_directory)
+print(receiver_map)
+```
+
+### Species Use Plots
+```{r}
+## Calculate merge detections of tag per receiver with species information
+detections_per_tag_per_receiver = merge(x = detections_per_tag_per_receiver, y = tagging_df[ ,c('tag_id', 'species')], on = 'tag_id')
+
+## Get average use of receiver by species 
+species_receiver_use = aggregate(index_of_receiver_use~species+receiver, data = detections_per_tag_per_receiver, FUN = mean)
+  colnames(species_receiver_use) = c('species', 'receiver' , 'receiver_use')
+  
+## Merge with lat lon positions for each receiver from molo_df
+receiver_postions =  unique(molo_df[ ,c('receiver', 'lat', 'lon')])
+species_receiver_use = merge(x = species_receiver_use, y = receiver_postions, on = 'receiver', all.x = T, all.y = F)
+
+## Make species plots for receiver use
+for(species in species_receiver_use$species){
+  receiver_use_by_spp = ggmap(molo_basemap) + 
+    geom_point(data = species_receiver_use[species_receiver_use$species == species, ], 
+               mapping = aes(x = lon, y = lat, color = 'red', size =  receiver_use)) + 
+    labs(x = '°Longitude', y = '°Latitude') +
+    ggsave(filename = paste('Receiver Use by ', species, '.pdf', sep = ''), path = figure_directory)
+  print(receiver_use_by_spp)
+}
+```
+
+### Day Night Plots
+```{r}
+### Day Night Plots
+## For all fish
+plot_day_night(molo_df, plot_title = 'All Fish')
+
+## By Species
+for (spp in unique(tagging_df$species)){
+  plot_day_night(molo_df[molo_df$tag_id == tagging_df$tag_id[tagging_df$species == spp], ], plot_title = spp)
+}
+
+## By Individual
+for (tag_id in molo_df$tag_id){
+  plot_day_night(molo_df[molo_df$tag_id == tag_id, ], plot_title = paste(tagging_df$species[tagging_df$tag_id == tag_id], '- Tag', as.character(tag_id), sep = ' '))
+}
+```
+
+
+### Barplot of detections by date
+```{r}
+### Bar plot of detections in crater by date 
+detections_per_day_df = count_detections_per_date(molo_df)
+
+## Barplot of detections by individual
+for(column in colnames(detections_per_day_df)[2:ncol(detections_per_day_df)]){
+  ggplot(data = detections_per_day_df, mapping = aes_string(x = 'date', y = column)) +
+    geom_bar(stat = "identity") + 
+    labs(title = paste('Tag ', strsplit(x = column, split = '_')[[1]][2], sep = ''), x = 'Date', y = 'Detections') + 
+    ggsave(filename = paste('Daily Detection Barplot -', column, '.pdf'), path = figure_directory)
+}
+
+
+## Detections by species
+
+## Barplot of all detections
+aggregate(data =
+```
+
+### Bar plot # of Fish (standardized percent of fish tagged to date) by date and Spp
+```{r}
+## Convert detections_per_day to presence/absence
+presence_absence_wide_df = detections_per_day_df
+for (i in 2:ncol(presence_absence_wide_df)){
+  presence_absence_wide_df[ ,i] = as.numeric(presence_absence_wide_df[ ,i] > 0)
+}
+
+## Convert from wide to long format
+presence_absence_long_df = melt(presence_absence_wide_df, id.vars = c('date'), measure.vars = colnames(presence_absence_wide_df)[2:ncol(presence_absence_wide_df)], variable.name = 'tag_id', value.name = 'detected')
+
+# Drop 'tag_' prefix from tag_id column for matching purposes
+presence_absence_long_df$tag_id = levels(presence_absence_long_df$tag_id)[presence_absence_long_df$tag_id]
+for(i in 1:nrow(presence_absence_long_df)){
+  presence_absence_long_df$tag_id[i] = strsplit(presence_absence_long_df$tag_id[i], split = '_')[[1]][2]
+}
+
+## Merge with species from tagging data
+presence_absence_long_df = merge(x = presence_absence_long_df, y = tagging_df[ ,c('tag_id', 'species')], on = 'tag_id')
+
+## Drop date and tag pairs preceding the date the fish was tagged
+indicies_to_drop = c()
+for(i in nrow(presence_absence_long_df)){
+  if(as.Date(tagging_df$datetime[tagging_df$tag_id == presence_absence_long_df$tag_id[i]]) <= presence_absence_long_df$date[i]){
+    indicies_to_drop = c(indicies_to_drop, i)
+  }
+}
+presence_absence_long_df = presence_absence_long_df[-indicies_to_drop, ]
+
+## Get a list of active tags by date and species
+active_tags_by_date = aggregate(tag_id ~ date + species, data = presence_absence_long_df, FUN = uniqueN)
+  colnames(active_tags_by_date) = c('date', 'species', 'deployed_tags')
+
+## Standardize tag counts by tags deployed and plot as % of tags detected per day by species
+for(species in unique(presence_absence_long_df$species)){
+  
+  # Count number of tags detected daily by species 
+  presence_absence_by_spp_df = aggregate(detected~date, data = presence_absence_long_df[presence_absence_long_df$species == species, ], FUN = sum)
+  colnames(presence_absence_by_spp_df) = c('date', 'tags_detected')
+  
+  # Standardize daily tag count by the number of tags deployed
+  presence_absence_by_spp_df = merge(x = presence_absence_by_spp_df, y = active_tags_by_date[active_tags_by_date$species == species, ], on = 'date')
+  presence_absence_by_spp_df$percent_tags_detected = presence_absence_by_spp_df$detected / presence_absence_by_spp_df$deployed_tags
+  
+  # Make plot at species level
+  ggplot(data = presence_absence_by_spp_df, mapping = aes(x = date, y = percent_tags_detected)) + 
+    geom_bar(stat = 'identity') + 
+    labs(title = species, x = 'Date', y = '% of tags detected') +
+    ggsave(filename = paste('Detections Standardized By Species - ', species, '.pdf', sep = ''), path = figure_directory)
+}
+
+```
+
+### Bar plot vessel traffic by date
+```{r}
+### LOGIC HERE TO GET TO # BOATS / DAY
+## Get max_vessels at any given time, total_vessels
+
+
+# Make plot for max_vessels 
+max_vessels_plot = ggplot(data = vessels_per_day, mapping = aes(x = date, y = max_vessels)) + 
+    geom_bar(stat = 'identity') + 
+    labs(title = 'Maximum Number of Co-occuring Vessels Daily', x = 'Date', y = '# of Vessels') +
+    ggsave(filename = paste('Maximum Number of Co-occuring Vessels Daily.pdf ', species, '.pdf', sep = ''), path = figure_directory)
+
+# Make plot for tptal_vessels 
+total_vessels_plot = ggplot(data = vessels_per_day, mapping = aes(x = date, y = total_vessels)) + 
+    geom_bar(stat = 'identity') + 
+    labs(title = 'Maximum Number of Co-occuring Vessels Daily', x = 'Date', y = '# of Vessels') +
+    ggsave(filename = paste('Total Vessels Daily.pdf ', species, '.pdf', sep = ''), path = figure_directory)
+
+print(max_vessels_plot)
+print(total_vessels_plot)
+```
+
+
+### Scatter plot x axis boat traffic, y axis presence / absence color by spp
+```{r}
+
+```
+
+### Scatter plot x axis boat traffic, y axis detections per individual color by spp add error bars for daily detections
+```{r}
+
+```
+
+# Residency and dispersal
+```{r}
+## Calculate residency
+detection_stats$residence_metric = detection_stats$unique_days / detection_stats$days_at_liberty
+
+## Assign residence category: low = < 33%, medium = 33 - 66, high = >= 66 (Tinhan et al. 2014) -
+detection_stats$residence_category = 'Low'
+for (i in 1:nrow(detection_stats)){
+  if (detection_stats$residence_metric[i] >= (1/3)) {
+    detection_stats$residence_category[i] = 'Medium'
+  }
+  if (detection_stats$residence_metric[i] >= (2/3)) {
+    detection_stats$residence_category[i] = 'High'
+  }
+}
+
+## Create grouped barplot of residency by species
+ggplot(data = experiment, mapping = aes(x=date, y=car_count, fill=site)) +
+  geom_bar(stat="identity", position = "dodge)
+
+```
+
+## Calculate 30 day moving average of residency, then plot against days since tagging
+```{r}
+## Get total days in the study
+total_days_in_study = as.numeric(diff.Date(c(min(molo_df$date), max(molo_df$date))))
+
+## Create a dataframe where rows are tag id and columns are study date
+present_after_n_days_df = data.frame()
+
+## Determine if a tag was detected on a receiver n days after tagging
+for (i in 1:uniqueN(molo_df$tag_id)){
+  ## Subset data for individual tags
+  indv_data = molo_df[molo_df$tag_id == unique(molo_df$tag_id)[i], ]
+  ## Determine if a fish was present n days after tagging
+  difftimes = rep(0, len = total_days_in_study)
+  # determine difference in days between each unique day a tag was detected and the tag's earliest detection, flip the corresponding value in difftimes array to 1
+  detected_dates = unique(indv_data$date)
+  for (j in 1:length(detected_dates)){
+    difftimes[as.numeric(diff.Date(c(min(indv_data$date), detected_dates[j]))) + 1] = 1
+  }
+  df_row = c(unique(molo_df$tag_id)[i], difftimes)
+  present_after_n_days_df = rbind(present_after_n_days_df, df_row)
+}
+colnames(present_after_n_days_df) = c('tag_id', as.character(1:total_days_in_study))
+
+## Convert from wide format to long format
+present_after_n_days_df_long_df = melt(present_after_n_days_df, id.vars = 'tag_id', measure.vars = colnames(present_after_n_days_df)[2:ncol(present_after_n_days_df)], variable.name = 'day', value.name = 'detected')
+
+## Merge with species data
+present_after_n_days_df_long_df = merge(x = present_after_n_days_df_long+df, y = tagging_df[ ,c('tag_id', 'species')], on = 'tag_id')
+
+## Calculate number of each species present n days after tagging
+species_presence_after_tagging = aggregate(detected ~ species + day, data = present_after_n_days_df_long, FUN = sum)
+  colnames(species_presence_after_tagging) = c('species', 'day', 'n_individuals')
+
+## Count unique tags by species
+individuals_per_species = aggregate(tag_id ~ species, data = present_after_n_days_df_long, FUN = uniqueN)
+colnames(individuals_per_species) = c('species', 'n_tags')
+
+## Standardize species level daily counts by number of tags belonging to that species
+species_presence_after_tagging = merge(x = species_presence_after_tagging, y = individuals_per_species, on = 'species')
+species_presence_after_tagging$percent_individuals_detected = species_presence_after_tagging$n_individuals / species_presence_after_tagging$n_tags
+
+## Calculate 30 day moving average
+spp_presence_30_day_avg = data.frame()
+for (species in species_presence_after_tagging$species){
+  spp_presence_after_tagging = species_presence_after_tagging[species_presence_after_tagging$species == species, ]
+  moving_average_30 = c()
+  for (i in 30:max(species_presence_after_tagging$days)){
+    moving_average_30 = c(moving_average_30, mean(species_presence_after_tagging$percent_individuals_detected[species_presence_after_tagging$day >= i-30 & species_presence_after_tagging$day <= i]))
+  }
+  df_row = c(species, moving_average_30)
+  spp_presence_30_day_avg = rbind(spp_presence_30_day_avg, df_row)
+}
+colnames(spp_presence_30_day_avg) = c('species', as.character(1:(ncol(spp_presence_30_day_avg)-1)))
+
+## Convert from wide format to long format
+spp_presence_30_day_avg_long_df = melt(spp_presence_30_day_avg, id.vars = 'species', measure.vars = colnames(spp_presence_30_day_avg)[2:ncol(spp_presence_30_day_avg)], variable.name = 'day', value.name = 'percent_individuals_detected')
+
+## Generate line plot
+present_after_tagging_plot = ggplot(spp_presence_30_day_avg_long_df, mapping = aes(x = day, y = percent_individuals_detected, color = species)) + 
+  geom_line() + 
+  labs(x = 'Number of days', y = 'Proportion present') +
+  ggsave(filename = 'Proportion of tags present after tagging.pdf', path = figure_directory)
+
+print(present_after_tagging_plot)
+```
+
+# Statistical analysis
+
+Calculate mean residency by spp (irregardless of time), then ANOVA by spp
+Use Tukey's HSD to determine significance
+```{r}
+## ANOVA model for residency metric by species
+residence_by_species_anova = aov(residence_metric ~ species, data=detection_stats)
+summary(residence_by_species_anova)
+
+## Tukey's Honestly Significant Differences between species
+TukeyHSD(residence_by_species_anova)
+```
+
+GLM comparing size and residency time by spp independent var (size, time at liberty) dependent (residency index)
+```{r}
+## Fit binomial GLM to average residency metric data (proportional between 0-1)
+species_glm = glm(residence_metric ~  species + fork_length_cm *days_at_liberty * species, data = detection_stats, family = binomial(logit))
+summary(species_glm)
+```
+
+## GLM comparing time in crater to vessel traffic
+```{r}
+
+```
