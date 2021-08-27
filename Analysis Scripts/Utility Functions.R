@@ -5,7 +5,10 @@ packages = c(
   'readxl', # read_excel()
   'ggplot2', # ggplot()
   'data.table', # uniqueN()
-  'reshape2'
+  'reshape2',
+  'ggmap', # get_map(), ggmap()
+  'dplyr', # inner_join
+  'lubridate' # format
 )
 
 # loop to check R library for each dependent package and install if they're not currently in library
@@ -51,8 +54,6 @@ load_vemco_data = function(filename, format = '%Y-%m-%d %H:%M:%S', tz = 'HST'){
   vue_df$receiver = abs(as.numeric(vue_df$receiver))
   return (vue_df)
 }
-
-
 
 load_fdf_report = function(filename = '/Users/stephenscherrer/Desktop/FDF.csv', tag_specs = NULL){
   fdf_report = read.csv(filename, stringsAsFactors = FALSE)
@@ -118,56 +119,49 @@ load_receiver_data = function(filename, format = '%m/%d/%y %H:%M', tz = 'HST'){
   return (receiver_df)
 }
 
-
 load_tagging_data = function(filename){
   #### Loads in .csv file containing fish tagging data and cleans it up as appropriate
-  tagging_df = read.csv(filename, stringsAsFactors = FALSE)
+  tagging_df = read_excel(filename)
   ### Adjusting Column names
-  colnames(tagging_df)[1]  <- 'unique_id'
-  colnames(tagging_df)[2]  <- 'datetime'
-  colnames(tagging_df)[3]  <- 'species'
-  colnames(tagging_df)[4]  <- 'conventional_tag_id'
-  colnames(tagging_df)[5]  <- 'vem_tag_type'
-  colnames(tagging_df)[6]  <- 'vem_tag_serial'
-  colnames(tagging_df)[7]  <- 'vem_tag_id'
-  colnames(tagging_df)[8]  <- 'fork_length(cm)'
-  colnames(tagging_df)[9]  <- 'precaudal_length(cm)'
-  colnames(tagging_df)[10] <- 'cohort'
-  colnames(tagging_df)[11] <- 'area_of_capture'
-  colnames(tagging_df)[12] <- 'depth_of_capture'
-  colnames(tagging_df)[13] <- 'lat_deg'
-  colnames(tagging_df)[14] <- 'lat_min'
-  colnames(tagging_df)[15] <- 'lon_deg'
-  colnames(tagging_df)[16] <- 'lon_min'
-  colnames(tagging_df)[17] <- 'lat'
-  colnames(tagging_df)[18] <- 'lon'
-  colnames(tagging_df)[19] <- 'stomach_everted'
-  colnames(tagging_df)[20] <- 'eyes_popped'
-  colnames(tagging_df)[21] <- 'bladder_vented'
-  colnames(tagging_df)[22] <- 'point_of_incision'
-  colnames(tagging_df)[23] <- 'dna_clip'
-  colnames(tagging_df)[24] <- 'cannulation'
-  colnames(tagging_df)[25] <- 'sex'
-  colnames(tagging_df)[26] <- 'video'
-  colnames(tagging_df)[27] <- 'photo'
-  colnames(tagging_df)[28] <- 'photo_name'
-  colnames(tagging_df)[29] <- 'audio_log_file'
-  colnames(tagging_df)[30] <- 'dropshot'
-  colnames(tagging_df)[31] <- 'tissue_sample'
-  colnames(tagging_df)[32] <- 'gut_sample'
-  colnames(tagging_df)[33] <- 'tagger'
-  colnames(tagging_df)[34] <- 'notes'
-  colnames(tagging_df)[35] <- 'recaptured'
-  colnames(tagging_df)[36] <- 'detections'
-  colnames(tagging_df)[37] <- 'comments'
-  colnames(tagging_df)[38] <- 'release_method'
+  colnames(tagging_df)[1]  <- 'species'
+  colnames(tagging_df)[2]  <- 'fork_length'
+  colnames(tagging_df)[3]  <- 'condition'
+  colnames(tagging_df)[4]  <- 'tag_id'
+  colnames(tagging_df)[5]  <- 'tag_type'
+  colnames(tagging_df)[6]  <- 'tagging_date'
+  colnames(tagging_df)[7]  <- 'time'
+  colnames(tagging_df)[8] <- 'dart_tag_id'
+  colnames(tagging_df)[9] <- 'lon_deg'
+  colnames(tagging_df)[10] <- 'lon_min'
+  colnames(tagging_df)[11] <- 'lat_deg'
+  colnames(tagging_df)[12] <- 'lat_min'
+  colnames(tagging_df)[13] <- 'comments'
+  
   #### Converting tagging date to POSIX object
-  tagging_df$datetime = as.POSIXct(tagging_df$datetime, format = '%m/%d/%y %H:%M', tz = 'HST')
+  # tagging_df$datetime = as.POSIXct(paste(tagging_df$tagging_date, tagging_df$time), format = '%Y-%m-%d %H:%M', tz = 'HST')
+  
   #### Converting lat lon data from degree minutes to decimal degrees
   tagging_df$lat = convert_lat_lon(tagging_df$lat_deg, tagging_df$lat_min)
   tagging_df$lon = convert_lat_lon(tagging_df$lon_deg, tagging_df$lon_min)
+  
   return (tagging_df)
 }
+
+load_vessel_data = function(filename){
+  ## Read in datafile
+  vessel_df = read.csv(filename)
+  colnames(vessel_df) = c('permit_number', 'vessel_name', 'permittee_name', 'date', 'start_time', 'end_time', 'stay_time', 'buoy', 'scuba', 'snuba', 'snorkel', 'other', 'activity_type', 'same_group', 'comment', 'number_of_buoys', 'x')
+  
+  ## Reformat date and time components
+  for (i in 1:nrow(vessel_df)){
+    vessel_df$start_time[i] = as.POSIXct(format(strptime(paste(vessel_df$date[i], vessel_df$start_time[i]), "%m/%d/%y %I:%M %p"), "%Y-%m-%d %H:%M"), tz = 'HST')
+    vessel_df$end_time[i] = as.POSIXct(format(strptime(paste(vessel_df$date[i], vessel_df$end_time[i]), "%m/%d/%y %I:%M %p"), "%Y-%m-%d %H:%M"), tz = 'HST')
+    vessel_df$date[i] = as.POSIXct(format(strptime(vessel_df$date[i], "%m/%d/%y"), "%Y-%m-%d"), tz = 'HST')
+  }
+  
+  return(vessel_df)
+}
+
 
 calculate_spatial_evenness = function(vue_df, receiver_df){
   ### function to calculate spacitail eveness based on Pielou 1966 from TinHan 2014
@@ -257,8 +251,46 @@ plot_day_night = function(vue_df, receiver_df = NULL, color_palette = NULL, plot
   }
 }
 
-
-
+convert_lat_lon = function(ll_deg, ll_min = FALSE){
+  #### Converts latitude and longitude between ll minutes and ll decimal degrees
+  ### 2 usages:
+  ## 1. Convert decimal degrees to degree minutes
+  # 1 argument
+  # ll_pref is a single argument of latitude or longitude in decimal degrees
+  # Returns a prefix and decimal for that argument
+  ## 2. Convert degree minutes to decimal degrees
+  # 2 arguments
+  # ll_pref is the latitude or longitude's degree
+  # ll_min is the degree minutes
+  # returns a single float of ll in decimal degrees
+  ## Use Case 1.
+  if (ll_min[1] == FALSE){
+    ll_deg = as.numeric(as.character(ll_deg))
+    ll_bin = matrix(0, length(ll_deg), 2)
+    for (r in 1:length(ll_deg)){
+      if (isTRUE(ll_deg[r] >= 0)){
+        ll_dec = ll_deg[r] - floor(ll_deg[r])
+        ll_bin[r, ] = c(floor(ll_deg[r]), (ll_dec)*60)
+      } else {
+        ll_dec = (ll_deg[r] - ceiling(ll_deg[r]))*-1
+        ll_bin[r, ] = c(ceiling(ll_deg[r]), (ll_dec)*60)
+      }
+    }
+    ## Use Case 2.
+  }else{
+    ll_deg = as.numeric(as.character(ll_deg))
+    ll_min = as.numeric(as.character(ll_min))
+    ll_bin = matrix(0, length(ll_deg), 1)
+    for (r in 1:length(ll_deg)){
+      ll_dec_deg = abs(ll_deg[r]) + (abs(ll_min[r])/60)
+      if (isTRUE(ll_deg[r] < 0)){
+        ll_dec_deg = ll_dec_deg*(-1)
+      }
+      ll_bin[r] = ll_dec_deg
+    }
+  }
+  return (ll_bin)
+}
 
 get_time_of_day = function(vue_df){
   ## Calculating sunrise, sunset and dawn for each detection using mean lat lon coordinates of from vue file
@@ -355,10 +387,14 @@ count_detections_per_date = function(vue_df){
     
     ## Create a new column with a column name corrosponding to tag id
     detections_per_date_df = cbind(detections_per_date_df, detection_vector)
-    colnames(detections_per_date_df)[ncol(detections_per_date_df)] = paste('tag_', as.character(tag_id), sep = '')
+    colnames(detections_per_date_df)[ncol(detections_per_date_df)] =  as.character(tag_id)
   }
   
-  return(detections_per_date_df)
+  date_col_names = detections_per_date_df[ ,1]
+  detections_per_date_df_t = as.data.frame((t(detections_per_date_df[, -1])))
+  colnames(detections_per_date_df_t) = date_col_names
+  
+  return(detections_per_date_df_t)
 }
 
 calculate_time_at_liberty = function(vue_df){
@@ -379,3 +415,8 @@ calculate_days_detected = function(vue_df){
   return(days_detected)
 }
   
+
+    
+  
+  
+
