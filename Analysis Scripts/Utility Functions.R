@@ -85,37 +85,12 @@ load_receiver_data = function(filename, format = '%m/%d/%y %H:%M', tz = 'HST'){
   ### Loading in datafile
   receiver_df = read.csv(filename, stringsAsFactors = FALSE)
   ### Adjusting Column Names
-  colnames(receiver_df)[1] = 'station_name'
-  colnames(receiver_df)[2] = 'consecutive_deployment_number'
-  colnames(receiver_df)[3] = 'deployment_date'
-  colnames(receiver_df)[4] = 'recovery_date'
-  colnames(receiver_df)[5] = 'recovered'
-  colnames(receiver_df)[6] = 'lat_deg'
-  colnames(receiver_df)[7] = 'lat_min'
-  colnames(receiver_df)[8] = 'lon_deg'
-  colnames(receiver_df)[9] = 'lon_min'
-  colnames(receiver_df)[10] = 'depth'
-  colnames(receiver_df)[11] = 'vr2w_serial'
-  colnames(receiver_df)[12] = 'acoustic_release_serial'
-  colnames(receiver_df)[13] = 'acoustic_release_battery_life'
-  colnames(receiver_df)[14] = 'acoustic_release_voltage_at_deployment'
-  colnames(receiver_df)[15] = 'acoustic_release_serial_code'
-  colnames(receiver_df)[16] = 'temperature_logger_serial'
-  colnames(receiver_df)[17] = 'deployed_by'
-  colnames(receiver_df)[18] = 'recovered_by'
-  colnames(receiver_df)[19] = 'comments_deployment'
-  colnames(receiver_df)[20] = 'comments_recovery'
-  ### Converting deployment and recovery dates to POSIX objects
-  receiver_df$deployment_date = as.POSIXct(receiver_df$deployment_date, format = '%m/%d/%y %H:%M', tz = 'HST')
-  receiver_df$recovery_date = as.POSIXct(receiver_df$recovery_date, format = '%m/%d/%y %H:%M', tz = 'HST')
-  ## Converting latitude and longitude from degree minutes to decimal degrees
-  receiver_df$lat = convert_lat_lon(receiver_df$lat_deg, receiver_df$lat_min)
-  receiver_df$lon = convert_lat_lon(receiver_df$lon_deg, receiver_df$lon_min)
-  ## Converting station depth recorded in fathoms to m. 1 fathom = 1.8288 m
-  station_fath_to_m = as.numeric(sapply(strsplit(receiver_df$depth, " "), "[", 1)) * 1.8288
-  fath_indicies = which(tolower(sapply(strsplit(receiver_df$depth, " "), "[", 2)) %in% c('fathoms', 'fath'))
-  receiver_df$depth[fath_indicies] = station_fath_to_m[fath_indicies]
-  receiver_df$depth = as.numeric(gsub(pattern = " m", replacement = "", x = receiver_df$depth))
+  colnames(receiver_df)[1] = 'station'
+  colnames(receiver_df)[2] = 'receiver'
+  colnames(receiver_df)[3] = 'lat'
+  colnames(receiver_df)[4] = 'lon'
+  colnames(receiver_df)[5] = 'in_crater'
+  receiver_df$depth = as.numeric(substr(receiver_df$station, 12, 13))
   return (receiver_df)
 }
 
@@ -210,7 +185,8 @@ plot_day_night = function(vue_df, receiver_df = NULL, color_palette = NULL, plot
   }
   
   if(is.null(color_palette)){
-    vue_df$plot_color = "black"
+    #vue_df$plot_color = "black"
+    vue_df$plot_color = alpha("red",0.02)  #KW changed so you could see better
   }else if(class(color_palette$colors) == "character"){
     station_colors = as.data.frame(cbind(color_palette$colors, color_palette$station))
     colnames(station_colors) = c('plot_color', 'station')
@@ -245,7 +221,8 @@ plot_day_night = function(vue_df, receiver_df = NULL, color_palette = NULL, plot
   polygon(cord.x,cord.y,col='lightgrey')
   
   ## Add detections to plot
-  with(vue_df, points(plot_date, plot_time, col = plot_color, pch = 19, cex = 1))
+  #with(vue_df, points(plot_date, plot_time, col = plot_color, pch = 1, cex = 1))
+  with(vue_df, points(plot_date, plot_time, col = alpha(plot_color,0.02), pch = 1, cex = 1))
   if(is.null(receiver_df) == FALSE){
     abline(v = as.numeric(receiver_dates), col = 'blue')
   }
@@ -316,47 +293,6 @@ get_time_of_day = function(vue_df){
   return(vue_df)
 }
 
-file.path(data_directory, '20200524_Molokini_VR2_deployments.xlsx')
-
-load_receiver_data = function(filename, format = '%m/%d/%y %H:%M', tz = 'HST'){
-  #### Loads in .csv file containing receiver deployment and recovery data and cleans up file as appropriate
-  ### Loading in datafile
-  receiver_df = read_excel(file.path(data_directory, '20200524_Molokini_VR2_deployments.xlsx'))
-
-  ### Adjusting Column Names
-  colnames(receiver_df)[1] = 'station_name'
-  colnames(receiver_df)[2] = 'consecutive_deployment_number'
-  colnames(receiver_df)[3] = 'deployment_date'
-  colnames(receiver_df)[4] = 'recovery_date'
-  colnames(receiver_df)[5] = 'recovered'
-  colnames(receiver_df)[6] = 'lat_deg'
-  colnames(receiver_df)[7] = 'lat_min'
-  colnames(receiver_df)[8] = 'lon_deg'
-  colnames(receiver_df)[9] = 'lon_min'
-  colnames(receiver_df)[10] = 'depth'
-  colnames(receiver_df)[11] = 'vr2w_serial'
-  colnames(receiver_df)[12] = 'acoustic_release_serial'
-  colnames(receiver_df)[13] = 'acoustic_release_battery_life'
-  colnames(receiver_df)[14] = 'acoustic_release_voltage_at_deployment'
-  colnames(receiver_df)[15] = 'acoustic_release_serial_code'
-  colnames(receiver_df)[16] = 'temperature_logger_serial'
-  colnames(receiver_df)[17] = 'deployed_by'
-  colnames(receiver_df)[18] = 'recovered_by'
-  colnames(receiver_df)[19] = 'comments_deployment'
-  colnames(receiver_df)[20] = 'comments_recovery'
-  ### Converting deployment and recovery dates to POSIX objects
-  receiver_df$deployment_date = as.POSIXct(receiver_df$deployment_date, format = '%m/%d/%y %H:%M', tz = 'HST')
-  receiver_df$recovery_date = as.POSIXct(receiver_df$recovery_date, format = '%m/%d/%y %H:%M', tz = 'HST')
-  ## Converting latitude and longitude from degree minutes to decimal degrees
-  receiver_df$lat = convert_lat_lon(receiver_df$lat_deg, receiver_df$lat_min)
-  receiver_df$lon = convert_lat_lon(receiver_df$lon_deg, receiver_df$lon_min)
-  ## Converting station depth recorded in fathoms to m. 1 fathom = 1.8288 m
-  station_fath_to_m = as.numeric(sapply(strsplit(receiver_df$depth, " "), "[", 1)) * 1.8288
-  fath_indicies = which(tolower(sapply(strsplit(receiver_df$depth, " "), "[", 2)) %in% c('fathoms', 'fath'))
-  receiver_df$depth[fath_indicies] = station_fath_to_m[fath_indicies]
-  receiver_df$depth = as.numeric(gsub(pattern = " m", replacement = "", x = receiver_df$depth))
-  return (receiver_df)
-}
 
 count_detections_per_date = function(vue_df){
   ## Create column in tagging data  corrosponding to date

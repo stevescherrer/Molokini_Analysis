@@ -37,10 +37,28 @@ Proposed Approach:
   - Compare residency by species, size, and time at liberty
   - Create a GLM comparing # of individuals in crater regressed against boat traffic and species using AR(1) term on dependent variable on some time scale (daily? 6 hours? depends on resolution of vessel data)
 
+Stuff you need to do: 
+create google cloud console account. KW used kcweng@email.wm.edu 
+Enable google maps API, get key, enable billing
+register it in Rstudio
+See this tutorial https://youtu.be/Of_M4kcE9yM
+You will need to call these in R:
+  install.packages("rstudioapi")
+  library(rstudioapi)
+  register_google(key="put your key here")
+
 # Workspace Setup
+
+## Clear previous workspace
+```{r}
+rm(list = ls()) # Remove enviornmental variables
+gc() # Free RAM 
+```
+
 ## Establish Directory Heirarchy
 ```{r}
-project_directory = '/Users/stephenscherrer/Documents/Programming/Projects/Molokini'
+project_directory = '/Users/sscherrer/Desktop/Molokini_Analysis-main'
+# project_directory = '/Users/kweng/data/R/molokini/Molokini_Analysis-main'
 scripts_directory = file.path(project_directory, 'Analysis Scripts')
 data_directory = file.path(project_directory, 'Data')
 results_directory = file.path(project_directory, 'Results')
@@ -65,16 +83,20 @@ vessel_df = load_vessel_data(file.path(data_directory, "Molokini_Master_June_21.
 ## Metadata Files
 tagging_df = load_tagging_data(file.path(data_directory, 'Molokini_Fish_Tagging_master.xlsx'))
 
-# receiver_df = load_receiver_data(file.path(data_directory, ))
+receiver_df = load_receiver_data(file.path(data_directory, 'Receiver_Data.csv'))
 ```
 
 ## Clean Data
 - Associate detections with time of day (day, night, dawn, dusk)
+- Associate tag data with receiver metadata
 - Remove detections from tags not associated with this study
 - Remove false detections
 ```{r}
 ## Associate detections with time of day
 molo_df = get_time_of_day(molo_df)
+
+## Associate tag data with receiver metadata
+molo_df = left_join(x = molo_df, y = receiver_df[, c('station', 'in_crater')])
 
 ## Combine vue df with tagging df - remove irrelevant tags in the process
 molo_df = inner_join(x = molo_df, y = tagging_df[ ,c('tag_id', 'species', 'fork_length', 'tagging_date' )], by = 'tag_id')
@@ -152,6 +174,39 @@ colnames(species_receiver_use) = c('species', 'receiver_use')
 
 print(species_receiver_use)
 ``` 
+
+## Calculate fraction of detections in crater vs out
+```{r}
+## Count detections for each tag in the crater
+detections_in_crater = aggregate(datetime ~ tag_id + date + time_of_day + species, data = molo_df[molo_df$in_crater == TRUE, ], FUN = length)
+colnames(detections_in_crater) = c('tag_id', 'date', 'time_of_day', 'species', 'detections_in')
+
+## Count detections for each tag out of crater
+detections_out_crater = aggregate(datetime ~ tag_id + date + time_of_day + species, data = molo_df[molo_df$in_crater == FALSE, ], FUN = length)
+colnames(detections_out_crater) = c('tag_id', 'date', 'time_of_day', 'species','detections_out')
+
+## Join in and out counts
+detections_in_crater = full_join(detections_in_crater, detections_out_crater)
+# Impute zeros for missing data (days a tag was only detected in or out but not both)
+detections_in_crater[is.na(detections_in_crater)] = 0
+
+## Calculate percent of detections in the crater
+detections_in_crater$percent_in = detections_in_crater$detections_in / (detections_in_crater$detections_in + detections_in_crater$detections_out)
+
+## Calculate daily vessel traffic
+vessels_per_day = aggregate(vessel_name ~ date, data = vessel_df, FUN = uniqueN)
+colnames(vessels_per_day) = c('date', 'daily_vessels')
+
+## Merge vessel traffic data with detection data
+detections_in_crater = full_join(detections_in_crater, vessels_per_day)
+# Impute zeros for missing data (days where no fish were detected or no vessels present)
+# detections_in_crater[is.na(detections_in_crater)] = 0
+
+crater_detection_model = lm(percent_in ~ species * time_of_day * daily_vessels, data = detections_in_crater, na.action = na.omit())
+summary(crater_detection_model)
+
+```
+
 ## Calculate Pianka's Niche Overlap Index - Pianka (1973) The Structure of Lizard Communities
  0 = no overlap, 1 = perfect overlap
 ```{r}
@@ -195,7 +250,13 @@ Study Area
 ```{r}
 ## Plot study area and receivers
 molo_basemap = get_map(location = c(lon = -156.496331, lat = 20.633007), zoom = 16, maptype = 'satellite')
-receiver_map = ggmap(molo_basemap) + geom_point(data = molo_df, mapping = aes(x = lon, y = lat), col = 'red') + labs(x = '°Longitude', y = '°Latitude', title = 'Receiver Locations') + ggsave(filename = 'Receiver Locations Google Map.pdf', path = figure_directory)
+#receiver_map = ggmap(molo_basemap) + geom_point(data = molo_df, mapping = aes(x = lon, y = lat), col = 'red') + labs(x = '°Longitude', y = '°Latitude', title = 'Receiver Locations') + ggsave(filename = 'Receiver Locations Google Map.pdf', path = figure_directory)
+#KW got " Error: Can't add `ggsave(filename = paste("Receiver Use by ", species, ".png", ` to a ggplot object.
+#Can't add `    sep = ""), path = figure_directory)` to a ggplot object."
+# Therefore KW moved this to a new line
+receiver_map = ggmap(molo_basemap) + geom_point(data = molo_df, mapping = aes(x = lon, y = lat), col = 'red') + labs(x = '°Longitude', y = '°Latitude', title = 'Receiver Locations')
+#KW found that PDF files were v large and took long for mac to show, so changed file type to .png
+ggsave(filename = 'Receiver Locations Google Map.png', plot = receiver_map, path = figure_directory)
 print(receiver_map)
 ```
 
@@ -210,22 +271,36 @@ receiver_postions =  unique(molo_df[ ,c('receiver', 'lat', 'lon')])
 species_receiver_use = merge(x = species_receiver_use, y = receiver_postions, on = 'receiver', all.x = T, all.y = F)
 
 ## Make species plots for receiver use by species
+# for(species in unique(species_receiver_use$species)){
+#   receiver_use_by_spp = ggmap(molo_basemap) + 
+#     geom_point(data = species_receiver_use[species_receiver_use$species == species, ], 
+#                mapping = aes(x = lon, y = lat, color = 'red', size =  receiver_use)) + 
+#     labs(x = '°Longitude', y = '°Latitude', title = paste('Receiver Use by ', species, sep = '')) +
+#     ggsave(filename = paste('Receiver Use by ', species, '.png', sep = ''), path = figure_directory)
+#   print(receiver_use_by_spp)
+#}
+
 for(species in unique(species_receiver_use$species)){
   receiver_use_by_spp = ggmap(molo_basemap) + 
     geom_point(data = species_receiver_use[species_receiver_use$species == species, ], 
                mapping = aes(x = lon, y = lat, color = 'red', size =  receiver_use)) + 
-    labs(x = '°Longitude', y = '°Latitude', title = paste('Receiver Use by ', species, sep = '')) +
-    ggsave(filename = paste('Receiver Use by ', species, '.pdf', sep = ''), path = figure_directory)
-  print(receiver_use_by_spp)
+    labs(x = '°Longitude', y = '°Latitude', title = paste('Receiver Use by ', species, sep = '')) 
+ggsave(filename = paste('Receiver Use by ', species, '.png', sep = ''), path = figure_directory)
+print(receiver_use_by_spp)
 }
 ```
 
 ### Day Night Plots
 ```{r}
 ### Day Night Plots
+# KW need to create color_palette that specifies colors for each vr2 station
+color_stations <- c("black","black","black","red","red","red","red")
+station_names <- c("Molokini 1A45fsw", "Molokini 2A45fsw", "Molokini 3A86fsw" ,"Molokini 4B45fsw","Molokini 5B60fsw" ,"Molokini 6B55fsw", "Molokini 7B68fsw")
+color_pal_inout <- data.frame(color_stations,station_names)
+
 ## For all fish
 pdf(file = file.path(figure_directory, 'Day Night Plot - All Fish.pdf'))
-plot_day_night(molo_df, plot_title = 'All Fish')
+plot_day_night(molo_df, color_palette = color_pal_inout, plot_title = 'All Fish')
 dev.off()
 
 ## By Species
@@ -235,6 +310,7 @@ for (spp in unique(molo_df$species)){
   dev.off()
 }
 
+#KW could not figure out how to pass color argument to plot_day_night, so modified the original function to get transparent red detection plots. 
 ## By Individual
 for (tag_id in unique(molo_df$tag_id)){
     pdf(file = file.path(figure_directory, paste('Day Night Plot - Tag ID ', tag_id, '.pdf', sep = '')))
@@ -258,7 +334,8 @@ for(i in 1:nrow(detections_per_day_df)){
   ## Make and save plot
   ggplot(data = indv_data, mapping = aes(x = date, y = detections)) +
     geom_bar(stat = "identity") + 
-    labs(title = paste('Tag ', rownames(detections_per_day_df)[i], sep = ' '), x = 'Date', y = 'Detections') + 
+    labs(title = paste('Tag ', rownames(detections_per_day_df)[i], sep = ' '), x = 'Date', y = 'Detections')
+    
     ggsave(filename = paste('Daily Detection Barplot -', rownames(detections_per_day_df)[i], '.pdf'), path = figure_directory)
 }
 
@@ -280,7 +357,8 @@ for (spp in unique(detections_per_day_spp_stg$species)){
   ## Make and save plot
     ggplot(data = detections_per_spp, mapping = aes(x = date, y = detections)) +
     geom_bar(stat = "identity") + 
-    labs(title = spp, x = 'Date', y = 'Detections') + 
+    labs(title = spp, x = 'Date', y = 'Detections')
+    
     ggsave(filename = paste('Daily Detection Barplot -', spp, '.pdf'), path = figure_directory)
 }
 
@@ -293,12 +371,12 @@ all_detections_long$date = rownames(all_detections_long)
 ## Make and save plot
 ggplot(data = all_detections_long, mapping = aes(x = date, y = detections)) +
 geom_bar(stat = "identity") + 
-labs(title = 'All Tagged Individuals', x = 'Date', y = 'Detections') + 
+labs(title = 'All Tagged Individuals', x = 'Date', y = 'Detections') 
+
 ggsave(filename = paste('Daily Detection Barplot - all tags.pdf'), path = figure_directory)
 ```
 
 ### Bar plot # of Fish (standardized percent of fish tagged to date) by date and Spp
-
 
 THIS NEEDS WORK!!!
 ```{r eval=FALSE, include=FALSE}
@@ -493,7 +571,6 @@ print(present_after_tagging_plot)
 ```
 
 # Statistical analysis
-
 Calculate mean residency by spp (irregardless of time), then ANOVA by spp
 Use Tukey's HSD to determine significance
 ```{r}
